@@ -21,6 +21,11 @@ export const checkout = async (req, res) => {
             (total, item) => total + item.price * item.quantity, 
             0);
 
+        // let totalAmt = 0;
+        // for (const item of orderItems) {
+        //     totalAmt += item.price * item.quantity;
+        // }
+
         const order = await Order.create({
             user: req.user.id,
             items: orderItems,
