@@ -1,6 +1,10 @@
 import User from '../models/users.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+// this handles the email queue, which is responsible for sending 
+// emails asynchronously. It allows the application to enqueue email
+// jobs without blocking the main thread, improving performance and responsiveness.
+import { emailQueue } from '../queues/emailQueue.js';
 
 export const registerUser = async (req, res) => {
     try {
@@ -12,19 +16,33 @@ export const registerUser = async (req, res) => {
         }
 
         const user = await User.create({name, email, password});
-        res.status(201).json({
-            _id: user._id,
+        await emailQueue.add(
+        'welcomeEmail',
+        {
+            to: user.email,
             name: user.name,
-            email: user.email,
-            role: user.role,
-        });
+        },
+        {
+            attempts: 3,
+            backoff: {
+            type: 'exponential',
+            delay: 1000,
+            },
+        }
+        );
+
+        res.status(201).json({
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+    });
     } catch (error) {
         res.status(500).json({
             message: "Server error",
             error: error.message});
     } 
 };
-
 
 export const loginUser = async (req, res) => {
     try {

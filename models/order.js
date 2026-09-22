@@ -53,5 +53,13 @@ const orderSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
+orderSchema.index({ user: 1, status: 1 });
+// { user: 1, status: 1 } serves "this user's pending orders" 
+// (user + status together, or user alone)
+orderSchema.index({ status: 1 });
+// { status: 1 } → serves "all pending orders across every user" 
+// (an admin-style query with no user filter)
+orderSchema.index({ paymentReference: 1 }, { unique: true, sparse: true });
+
 const Order = mongoose.model('Order', orderSchema);
 export default Order;

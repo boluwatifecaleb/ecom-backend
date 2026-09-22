@@ -1,6 +1,7 @@
 import Order from '../models/order.js';
 import Cart from '../models/cart.js';
 import User from '../models/users.js';
+import { invoiceQueue } from '../queues/invoiceQueue.js';
 
 // this is the controller that handles the checkout process(places an order), it 
 // takes the items in the user's cart and creates an order with 
@@ -107,6 +108,11 @@ export const verifyPayment = async (req, res) => {
       const order = await Order.findOne({ paymentReference: reference });
       order.status = 'paid';
       await order.save();
+
+      await invoiceQueue.add('generateInvoice', {
+        orderId: order._id.toString(),
+        userId: order.user.toString(),
+      });
 
       return res.status(200).json({ message: 'Payment verified', order });
     }

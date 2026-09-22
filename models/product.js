@@ -29,6 +29,8 @@ const productSchema = new mongoose.Schema({
         ref: 'Category',
         required: true
     },
+    // SKU, stock keeping Unit is a unique alphanumeric 
+    // code assigned to a product to identify its exact variant, size, color, and manufacturer details
     sku: {
         type: String,
         required: true,
@@ -37,6 +39,8 @@ const productSchema = new mongoose.Schema({
         uppercase: true,
 },
 }, { timestamps: true });
+
+productSchema.index({ category: 1 });
 
 const Product = mongoose.model('Product', productSchema);
 export default Product;
