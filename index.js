@@ -18,6 +18,7 @@ const PORT = process.env.PORT || 5000;
 
 dotenv.config();
 app.use(cookieParser());
+app.use('/api/orders/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 app.use('/api/auth/', rateLimiter);
 app.use('/api/auth', authroutes);

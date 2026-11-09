@@ -2,6 +2,7 @@ import Order from '../models/order.js';
 import Cart from '../models/cart.js';
 import User from '../models/users.js';
 import { invoiceQueue } from '../queues/invoiceQueue.js';
+import { createOrderWithItems } from '../db/orderRepo.js';
 
 // this is the controller that handles the checkout process(places an order), it 
 // takes the items in the user's cart and creates an order with 
@@ -36,11 +37,15 @@ export const checkout = async (req, res) => {
             });
             order.pgOrderId = pgOrderId;
             await order.save();
+
         } catch (pgError) {
-            console.error('Postgres write failed:', pgError.message);
+            console.error('Postgres write failed:', pgError);
             order.status = 'failed';
             await order.save();
-            return res.status(502).json({ message: 'Could not complete order, please try again' });
+            return res.status(502).json({
+                message: 'Could not complete order, please try again',
+                detail: pgError.message,
+            });
         }
 
         cart.items = [];
