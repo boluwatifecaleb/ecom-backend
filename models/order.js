@@ -41,13 +41,16 @@ const orderSchema = new mongoose.Schema(
         status: {
             type: String,
             enum: ['pending', 'paid', 'shipped', 
-                    'delivered', 'cancelled'],
+                    'delivered', 'cancelled', 'failed'],
             default: 'pending'
         },
 //This is where you'll store the unique transaction ID Paystack gives you — it's how you'll later 
 // ask Paystack "did this specific transaction actually succeed?
         paymentReference: {
             type: String,
+        },
+        pgOrderId: {
+            type: Number,
         }
     },
     { timestamps: true }

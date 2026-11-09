@@ -8,9 +8,9 @@ import { invoiceQueue } from '../queues/invoiceQueue.js';
 // them, then it clears the cart.
 export const checkout = async (req, res) => {
     try {
-        const cart = await Cart.findOne({user: req.user.id}).populate('items.product');
+        const cart = await Cart.findOne({ user: req.user.id }).populate('items.product');
         if (!cart || cart.items.length === 0) {
-            return res.status(400).json({message: 'Cart is empty'});
+            return res.status(400).json({ message: 'Cart is empty' });
         }
         const orderItems = cart.items.map(item => ({
             product: item.product._id,
@@ -19,13 +19,7 @@ export const checkout = async (req, res) => {
             quantity: item.quantity
         }));
         const totalAmount = orderItems.reduce(
-            (total, item) => total + item.price * item.quantity, 
-            0);
-
-        // let totalAmt = 0;
-        // for (const item of orderItems) {
-        //     totalAmt += item.price * item.quantity;
-        // }
+            (total, item) => total + item.price * item.quantity, 0);
 
         const order = await Order.create({
             user: req.user.id,
@@ -33,14 +27,28 @@ export const checkout = async (req, res) => {
             totalAmount
         });
 
+        try {
+            const pgOrderId = await createOrderWithItems({
+                mongoOrderId: order._id.toString(),
+                userId: req.user.id,
+                totalAmount,
+                items: orderItems,
+            });
+            order.pgOrderId = pgOrderId;
+            await order.save();
+        } catch (pgError) {
+            console.error('Postgres write failed:', pgError.message);
+            order.status = 'failed';
+            await order.save();
+            return res.status(502).json({ message: 'Could not complete order, please try again' });
+        }
+
         cart.items = [];
         await cart.save();
 
-        res.status(201).json({
-            message: 'Order placed successfully', 
-            order});
-    }catch (error) {
-        res.status(500).json({message: 'Server error', error: error.message});
+        res.status(201).json({ message: 'Order placed successfully', order });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
 
