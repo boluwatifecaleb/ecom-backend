@@ -1,21 +1,18 @@
 import express from 'express';
-import { checkout, getOrders,
-        initializePayment, verifyPayment
- } from '../controllers/orderController.js';
+import {
+  checkout, getOrders, initializePayment, verifyPayment, handleWebhook,
+} from '../controllers/orderController.js';
 import { protect } from '../middleware/authMiddleware.js';
+import { idempotency } from '../middleware/idempotency.js';
+import { verifyWebhookSignature } from '../middleware/verifyWebhookSignature.js';
 import { validateParams } from '../middleware/validate.js';
 import { orderIdParamSchema, referenceParamSchema } from '../validators/orderValidators.js';
-import { verifyWebhookSignature } from '../middleware/verifyWebhookSignature.js';
 
 const router = express.Router();
 
-router.post('/checkout', protect, checkout);
+router.post('/checkout', protect, idempotency, checkout);
 router.get('/my-orders', protect, getOrders);
-router.post('/webhook', verifyWebhookSignature, (req, res) => {
-  const event = JSON.parse(req.body.toString());
-  console.log('Verified webhook received:', event.event, event.data?.reference);
-  res.sendStatus(200);
-});
+router.post('/webhook', verifyWebhookSignature, handleWebhook);
 router.post('/:orderId/pay', protect, validateParams(orderIdParamSchema), initializePayment);
 router.get('/verify/:reference', protect, validateParams(referenceParamSchema), verifyPayment);
 

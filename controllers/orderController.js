@@ -1,9 +1,9 @@
 import Order from '../models/order.js';
 import Cart from '../models/cart.js';
 import User from '../models/users.js';
+import redis from '../config/redis.js';
 import { invoiceQueue } from '../queues/invoiceQueue.js';
-import { createOrderWithItems } from '../db/orderRepo.js';
-
+import { createOrderWithItems, markPgOrderPaid } from '../db/orderRepo.js';
 // this is the controller that handles the checkout process(places an order), it 
 // takes the items in the user's cart and creates an order with 
 // them, then it clears the cart.
@@ -105,6 +105,29 @@ export const initializePayment = async (req, res) => {
   }
 };
 
+const fulfillPaidOrder = async (orderId) => {
+  const order = await Order.findOneAndUpdate(
+    { _id: orderId, status: 'pending' },
+    { status: 'paid' },
+    { new: true }
+  );
+  if (!order) return null;   // already paid, or not payable: do nothing
+
+  await invoiceQueue.add('generateInvoice', {
+    orderId: order._id.toString(),
+    userId: order.user.toString(),
+  });
+
+  if (order.pgOrderId) {
+    try {
+      await markPgOrderPaid(order.pgOrderId);
+    } catch (err) {
+      console.error('Postgres status update failed:', err.message);
+    }
+  }
+  return order;
+};
+
 export const verifyPayment = async (req, res) => {
   try {
     const { reference } = req.params;
@@ -119,19 +142,50 @@ export const verifyPayment = async (req, res) => {
 
     if (data.data.status === 'success') {
       const order = await Order.findOne({ paymentReference: reference });
-      order.status = 'paid';
-      await order.save();
-
-      await invoiceQueue.add('generateInvoice', {
-        orderId: order._id.toString(),
-        userId: order.user.toString(),
-      });
-
-      return res.status(200).json({ message: 'Payment verified', order });
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      await fulfillPaidOrder(order._id);
+      const current = await Order.findById(order._id);
+      return res.status(200).json({ message: 'Payment verified', order: current });
     }
 
     res.status(400).json({ message: 'Payment not successful', data: data.data });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+export const handleWebhook = async (req, res) => {
+  let dedupeKey;
+  try {
+    const event = JSON.parse(req.body.toString());
+
+    if (event.event !== 'charge.success') {
+      return res.sendStatus(200);
+    }
+
+    const reference = event.data.reference;
+    dedupeKey = `webhook:${event.event}:${reference}`;
+
+    // guard 1: only the first delivery of this event gets through
+    const firstTime = await redis.set(dedupeKey, 'done', { nx: true, ex: 60 * 60 * 24 * 7 });
+    if (!firstTime) {
+      console.log('Duplicate webhook ignored:', dedupeKey);
+      return res.sendStatus(200);
+    }
+
+    const order = await Order.findOne({ paymentReference: reference });
+    if (!order) {
+      await redis.del(dedupeKey);   // let Paystack's retry try again later
+      return res.sendStatus(404);
+    }
+
+    // guard 2: atomic, and independent of Redis
+    await fulfillPaidOrder(order._id);
+    res.sendStatus(200);
+  } catch (error) {
+    if (dedupeKey) await redis.del(dedupeKey).catch(() => {});
+    res.sendStatus(500);   // a non-200 makes Paystack retry
   }
 };
