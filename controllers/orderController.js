@@ -1,13 +1,24 @@
 import Order from '../models/order.js';
 import Cart from '../models/cart.js';
 import User from '../models/users.js';
-import redis from '../config/redis.js';
+import redis, { invalidateProductCache } from '../config/redis.js';
 import { invoiceQueue } from '../queues/invoiceQueue.js';
 import { createOrderWithItems, markPgOrderPaid } from '../db/orderRepo.js';
+import Product from '../models/product.js';  
 // this is the controller that handles the checkout process(places an order), it 
 // takes the items in the user's cart and creates an order with 
 // them, then it clears the cart.
+
+const restoreStock = async (reserved) => {
+  for (const item of reserved) {
+    await Product.updateOne({ _id: item.product }, { $inc: { stock: item.quantity } });
+  }
+  await invalidateProductCache().catch((e) => console.error('Cache invalidation failed:', e.message));
+};
+
 export const checkout = async (req, res) => {
+    const reserved = [];
+    let order = null;
     try {
         const cart = await Cart.findOne({ user: req.user.id }).populate('items.product');
         if (!cart || cart.items.length === 0) {
@@ -22,12 +33,28 @@ export const checkout = async (req, res) => {
         const totalAmount = orderItems.reduce(
             (total, item) => total + item.price * item.quantity, 0);
 
-        const order = await Order.create({
+        // 1. reserve stock atomically, item by item
+        for (const item of orderItems) {
+            const updated = await Product.findOneAndUpdate(
+                { _id: item.product, stock: { $gte: item.quantity } },
+                { $inc: { stock: -item.quantity } }
+            );
+            if (!updated) {
+                await restoreStock(reserved);   // undo only what we already took
+                return res.status(400).json({ message: `Insufficient stock for ${item.name}` });
+            }
+            reserved.push({ product: item.product, quantity: item.quantity });
+        }
+        await invalidateProductCache().catch((e) => console.error('Cache invalidation failed:', e.message));
+
+        // 2. create the Mongo order
+        order = await Order.create({
             user: req.user.id,
             items: orderItems,
             totalAmount
         });
 
+        // 3. write to Postgres; on failure, undo everything
         try {
             const pgOrderId = await createOrderWithItems({
                 mongoOrderId: order._id.toString(),
@@ -37,15 +64,12 @@ export const checkout = async (req, res) => {
             });
             order.pgOrderId = pgOrderId;
             await order.save();
-
         } catch (pgError) {
-            console.error('Postgres write failed:', pgError);
+            console.error('Postgres write failed:', pgError.message);
             order.status = 'failed';
             await order.save();
-            return res.status(502).json({
-                message: 'Could not complete order, please try again',
-                detail: pgError.message,
-            });
+            await restoreStock(reserved);
+            return res.status(502).json({ message: 'Could not complete order, please try again' });
         }
 
         cart.items = [];
@@ -53,6 +77,7 @@ export const checkout = async (req, res) => {
 
         res.status(201).json({ message: 'Order placed successfully', order });
     } catch (error) {
+        if (!order) await restoreStock(reserved).catch(() => {});
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
