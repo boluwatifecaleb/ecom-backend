@@ -1,6 +1,7 @@
 import express from 'express';
 import {
-  checkout, getOrders, initializePayment, verifyPayment, handleWebhook,
+  checkout, getOrders, initializePayment, 
+  verifyPayment, handleWebhook, cancelOrder
 } from '../controllers/orderController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { idempotency } from '../middleware/idempotency.js';
@@ -15,5 +16,6 @@ router.get('/my-orders', protect, getOrders);
 router.post('/webhook', verifyWebhookSignature, handleWebhook);
 router.post('/:orderId/pay', protect, validateParams(orderIdParamSchema), initializePayment);
 router.get('/verify/:reference', protect, validateParams(referenceParamSchema), verifyPayment);
+router.post('/:orderId/cancel', protect, validateParams(orderIdParamSchema), cancelOrder);
 
 export default router;

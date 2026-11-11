@@ -3,7 +3,7 @@ import Cart from '../models/cart.js';
 import User from '../models/users.js';
 import redis, { invalidateProductCache } from '../config/redis.js';
 import { invoiceQueue } from '../queues/invoiceQueue.js';
-import { createOrderWithItems, markPgOrderPaid } from '../db/orderRepo.js';
+import { createOrderWithItems, markPgOrderPaid, setPgOrderStatus } from '../db/orderRepo.js';
 import Product from '../models/product.js';  
 // this is the controller that handles the checkout process(places an order), it 
 // takes the items in the user's cart and creates an order with 
@@ -212,5 +212,25 @@ export const handleWebhook = async (req, res) => {
   } catch (error) {
     if (dedupeKey) await redis.del(dedupeKey).catch(() => {});
     res.sendStatus(500);   // a non-200 makes Paystack retry
+  }
+};
+
+export const cancelOrder = async (req, res) => {
+  try {
+    // atomic: only a pending order owned by this user can flip, and only once
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.orderId, user: req.user.id, status: 'pending' },
+      { status: 'cancelled' },
+      { returnDocument: 'after' }
+    );
+    if (!order) return res.status(404).json({ message: 'Pending order not found' });
+
+    await restoreStock(order.items.map((i) => ({ product: i.product, quantity: i.quantity })));
+    if (order.pgOrderId) {
+      await setPgOrderStatus(order.pgOrderId, 'cancelled').catch((e) => console.error(e.message));
+    }
+    res.status(200).json({ message: 'Order cancelled', order });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 };

@@ -38,12 +38,17 @@ export const addToCart = async (req, res) => {
         (item) => item.product.toString() === productId
     );
 
+    const newTotal = (existingItem ? existingItem.quantity : 0) + quantity;
+    if (newTotal > product.stock) {
+      return res.status(400).json({ message: `Only ${product.stock} in stock` });
+    }
+
     if (existingItem) {
       existingItem.quantity += quantity;
     } else {
       cart.items.push({ product: productId, quantity });
     }
-
+    
     await cart.save();
     await cart.populate('items.product');
 
@@ -79,6 +84,12 @@ export const updateQuantity = async (req, res) => {
     const { quantity } = req.body;
 
     if (quantity < 1) return res.status(400).json({ message: 'Quantity must be at least 1' });
+
+    const product = await Product.findById(productId);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    if (quantity > product.stock) {
+      return res.status(400).json({ message: `Only ${product.stock} in stock` });
+    }
 
     const cart = await getOrCreateCart(req.user.id);
     const item = cart.items.find((item) => item.product.toString() === productId);

@@ -32,3 +32,7 @@ export const createOrderWithItems = async ({ mongoOrderId, userId, totalAmount, 
 export const markPgOrderPaid = async (pgOrderId) => {
   await pool.query(`UPDATE orders SET status = 'paid' WHERE id = $1`, [pgOrderId]);
 };
+
+export const setPgOrderStatus = async (pgOrderId, status) => {
+  await pool.query(`UPDATE orders SET status = $1 WHERE id = $2`, [status, pgOrderId]);
+};
