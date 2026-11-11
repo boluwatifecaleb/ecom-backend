@@ -170,6 +170,9 @@ export const verifyPayment = async (req, res) => {
       if (!order) {
         return res.status(404).json({ message: 'Order not found' });
       }
+      if (data.data.amount !== Math.round(order.totalAmount * 100)) {
+        return res.status(400).json({ message: 'Amount paid does not match order total' });
+      }
       await fulfillPaidOrder(order._id);
       const current = await Order.findById(order._id);
       return res.status(200).json({ message: 'Payment verified', order: current });
@@ -193,7 +196,6 @@ export const handleWebhook = async (req, res) => {
     const reference = event.data.reference;
     dedupeKey = `webhook:${event.event}:${reference}`;
 
-    // guard 1: only the first delivery of this event gets through
     const firstTime = await redis.set(dedupeKey, 'done', { nx: true, ex: 60 * 60 * 24 * 7 });
     if (!firstTime) {
       console.log('Duplicate webhook ignored:', dedupeKey);
@@ -202,16 +204,20 @@ export const handleWebhook = async (req, res) => {
 
     const order = await Order.findOne({ paymentReference: reference });
     if (!order) {
-      await redis.del(dedupeKey);   // let Paystack's retry try again later
+      await redis.del(dedupeKey);
       return res.sendStatus(404);
     }
 
-    // guard 2: atomic, and independent of Redis
+    if (event.data.amount !== Math.round(order.totalAmount * 100)) {
+      console.error('Webhook amount mismatch for', reference);
+      return res.sendStatus(200);
+    }
+
     await fulfillPaidOrder(order._id);
     res.sendStatus(200);
   } catch (error) {
     if (dedupeKey) await redis.del(dedupeKey).catch(() => {});
-    res.sendStatus(500);   // a non-200 makes Paystack retry
+    res.sendStatus(500);
   }
 };
 
